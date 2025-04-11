@@ -1,0 +1,367 @@
+From e48c2cd74e8b55373f678ddee52c7c30a65a3c5e Mon Sep 17 00:00:00 2001
+From: Florian Drescher <florian.drescher@tum.de>
+Date: Wed, 20 Dec 2023 08:37:03 +0100
+Subject: [PATCH] LLVM patches for lingo-db
+
+---
+ .../include/llvm/CodeGen/TargetRegisterInfo.h |  2 ++
+ llvm/lib/Target/X86/X86RegisterInfo.cpp       | 10 +++++++-
+ .../IR/BufferizableOpInterface.h              |  6 ++---
+ mlir/include/mlir/Dialect/Func/IR/FuncOps.td  |  2 +-
+ .../mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td   |  1 +
+ .../mlir/Interfaces/InferTypeOpInterface.td   |  4 ++--
+ mlir/include/mlir/Target/LLVMIR/Export.h      |  2 +-
+ .../mlir/Target/LLVMIR/ModuleTranslation.h    |  6 +++--
+ mlir/lib/Dialect/Func/IR/FuncOps.cpp          | 16 +++++++++++++
+ mlir/lib/ExecutionEngine/ExecutionEngine.cpp  |  2 +-
+ mlir/lib/Interfaces/DataLayoutInterfaces.cpp  |  2 +-
+ mlir/lib/Target/LLVMIR/DebugTranslation.cpp   |  4 ++--
+ mlir/lib/Target/LLVMIR/ModuleTranslation.cpp  | 23 ++++++++++++-------
+ mlir/lib/Transforms/LocationSnapshot.cpp      |  2 +-
+ .../Transforms/Utils/DialectConversion.cpp    | 12 ++++++----
+ 15 files changed, 66 insertions(+), 28 deletions(-)
+
+diff --git a/llvm/include/llvm/CodeGen/TargetRegisterInfo.h b/llvm/include/llvm/CodeGen/TargetRegisterInfo.h
+index 5f2793203f5c..89a46b843279 100644
+--- a/llvm/include/llvm/CodeGen/TargetRegisterInfo.h
++++ b/llvm/include/llvm/CodeGen/TargetRegisterInfo.h
+@@ -30,6 +30,8 @@
+ #include <cassert>
+ #include <cstdint>
+ 
++extern bool reserveLastRegister;
++
+ namespace llvm {
+ 
+ class BitVector;
+diff --git a/llvm/lib/Target/X86/X86RegisterInfo.cpp b/llvm/lib/Target/X86/X86RegisterInfo.cpp
+index 327c61c4c5d0..99c9c1e088d7 100644
+--- a/llvm/lib/Target/X86/X86RegisterInfo.cpp
++++ b/llvm/lib/Target/X86/X86RegisterInfo.cpp
+@@ -45,6 +45,11 @@ static cl::opt<bool>
+ EnableBasePointer("x86-use-base-pointer", cl::Hidden, cl::init(true),
+           cl::desc("Enable use of a base pointer for complex stack frames"));
+ 
++bool reserveLastRegister;
++static cl::opt<bool,true>
++ReserveLastRegister("x86-reserve-last-register", cl::Hidden,
++          cl::desc("Reserve last x86 gp register for other purposes"), cl::location(reserveLastRegister),cl::init(false));
++
+ X86RegisterInfo::X86RegisterInfo(const Triple &TT)
+     : X86GenRegisterInfo((TT.isArch64Bit() ? X86::RIP : X86::EIP),
+                          X86_MC::getDwarfRegFlavour(TT, false),
+@@ -547,7 +552,10 @@ BitVector X86RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
+   // Set the instruction pointer register and its aliases as reserved.
+   for (const MCPhysReg &SubReg : subregs_inclusive(X86::RIP))
+     Reserved.set(SubReg);
+-
++  if(reserveLastRegister){
++    for (const MCPhysReg &SubReg : subregs_inclusive(X86::R15))
++      Reserved.set(SubReg);
++  }
+   // Set the frame-pointer register and its aliases as reserved if needed.
+   if (TFI->hasFP(MF)) {
+     for (const MCPhysReg &SubReg : subregs_inclusive(X86::RBP))
+diff --git a/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h b/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
+index 0f630628016a..b6644963a751 100644
+--- a/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
++++ b/mlir/include/mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h
+@@ -60,16 +60,16 @@ struct AliasingOpResult {
+ template <typename T> class AliasList {
+ public:
+   /// Create an empty list of aliases.
+-  AliasList<T>() = default;
++  AliasList() = default;
+ 
+   /// Create a list of aliases.
+-  AliasList<T>(std::initializer_list<T> elems) {
++  AliasList(std::initializer_list<T> elems) {
+     for (T alias : elems)
+       addAlias(alias);
+   }
+ 
+   /// Create a list of aliases.
+-  AliasList<T>(SmallVector<T> &&aliases) : aliases(std::move(aliases)) {}
++  AliasList(SmallVector<T> &&aliases) : aliases(std::move(aliases)) {}
+ 
+   ArrayRef<T> getAliases() const { return aliases; }
+ 
+diff --git a/mlir/include/mlir/Dialect/Func/IR/FuncOps.td b/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
+index 45ec8a9e0b7e..8b90fc1c25bd 100644
+--- a/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
++++ b/mlir/include/mlir/Dialect/Func/IR/FuncOps.td
+@@ -35,7 +35,7 @@ class Func_Op<string mnemonic, list<Trait> traits = []> :
+ 
+ def CallOp : Func_Op<"call",
+     [CallOpInterface, MemRefsNormalizable,
+-     DeclareOpInterfaceMethods<SymbolUserOpInterface>]> {
++     DeclareOpInterfaceMethods<SymbolUserOpInterface>,DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+   let summary = "call operation";
+   let description = [{
+     The `func.call` operation represents a direct call to a function that is
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+index 1b62ce0ca3e6..3d1e5e810fa7 100644
+--- a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+@@ -117,6 +117,7 @@ def LLVM_PowIOp : LLVM_OneResultIntrOp<"powi", [], [0,1],
+       "functional-type(operands, results)";
+ }
+ def LLVM_BitReverseOp : LLVM_UnaryIntrOpI<"bitreverse">;
++def LLVM_ByteSwapOp : LLVM_UnaryIntrOpI<"bswap">;
+ def LLVM_CountLeadingZerosOp : LLVM_CountZerosIntrOp<"ctlz">;
+ def LLVM_CountTrailingZerosOp : LLVM_CountZerosIntrOp<"cttz">;
+ def LLVM_CtPopOp : LLVM_UnaryIntrOpI<"ctpop">;
+diff --git a/mlir/include/mlir/Interfaces/InferTypeOpInterface.td b/mlir/include/mlir/Interfaces/InferTypeOpInterface.td
+index 9f7118172389..f1bdcf3ef4aa 100644
+--- a/mlir/include/mlir/Interfaces/InferTypeOpInterface.td
++++ b/mlir/include/mlir/Interfaces/InferTypeOpInterface.td
+@@ -102,12 +102,12 @@ def InferTypeOpInterface : OpInterface<"InferTypeOpInterface"> {
+       /*methodName=*/"isCompatibleReturnTypes",
+       /*args=*/(ins "::mlir::TypeRange":$lhs, "::mlir::TypeRange":$rhs),
+       /*methodBody=*/[{
+-        return ConcreteOp::isCompatibleReturnTypes(lhs, rhs);
++        return ConcreteOp::isCompatibleReturnTypes(lhs, rhs); //NOLINT(clang-diagnostic-ambiguous-reversed-operator)
+       }],
+       /*defaultImplementation=*/[{
+         /// Returns whether two arrays are equal as strongest check for
+         /// compatibility by default.
+-        return lhs == rhs;
++        return lhs == rhs; //NOLINT(clang-diagnostic-ambiguous-reversed-operator)
+       }]
+     >,
+   ];
+diff --git a/mlir/include/mlir/Target/LLVMIR/Export.h b/mlir/include/mlir/Target/LLVMIR/Export.h
+index f9a6db0fc94d..a0888b5152d1 100644
+--- a/mlir/include/mlir/Target/LLVMIR/Export.h
++++ b/mlir/include/mlir/Target/LLVMIR/Export.h
+@@ -26,7 +26,7 @@ class Operation;
+ /// LLVMTranslationDialectInterface.
+ std::unique_ptr<llvm::Module>
+ translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
+-                        llvm::StringRef name = "LLVMDialectModule");
++                        llvm::StringRef name = "LLVMDialectModule", bool withDebugInfo=true);
+ } // namespace mlir
+ 
+ #endif // MLIR_TARGET_LLVMIR_EXPORT_H
+diff --git a/mlir/include/mlir/Target/LLVMIR/ModuleTranslation.h b/mlir/include/mlir/Target/LLVMIR/ModuleTranslation.h
+index 67091257a3cf..f1618bda235d 100644
+--- a/mlir/include/mlir/Target/LLVMIR/ModuleTranslation.h
++++ b/mlir/include/mlir/Target/LLVMIR/ModuleTranslation.h
+@@ -54,7 +54,7 @@ class LLVMFuncOp;
+ /// needs to look up block and function mappings.
+ class ModuleTranslation {
+   friend std::unique_ptr<llvm::Module>
+-  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef);
++  mlir::translateModuleToLLVMIR(Operation *, llvm::LLVMContext &, StringRef, bool withDebugInfo);
+ 
+ public:
+   /// Stores the mapping between a function name and its LLVM IR representation.
+@@ -265,7 +265,7 @@ public:
+ 
+ private:
+   ModuleTranslation(Operation *module,
+-                    std::unique_ptr<llvm::Module> llvmModule);
++                    std::unique_ptr<llvm::Module> llvmModule, bool withDebugInfo);
+   ~ModuleTranslation();
+ 
+   /// Converts individual components.
+@@ -302,6 +302,8 @@ private:
+   std::unique_ptr<llvm::Module> llvmModule;
+   /// A converter for translating debug information.
+   std::unique_ptr<detail::DebugTranslation> debugTranslation;
++  //how much debugging info should be available?
++  bool withDebugInfo;
+ 
+   /// A converter for translating loop annotations.
+   std::unique_ptr<detail::LoopAnnotationTranslation> loopAnnotationTranslation;
+diff --git a/mlir/lib/Dialect/Func/IR/FuncOps.cpp b/mlir/lib/Dialect/Func/IR/FuncOps.cpp
+index 7205a7eac18e..02fca4072bed 100644
+--- a/mlir/lib/Dialect/Func/IR/FuncOps.cpp
++++ b/mlir/lib/Dialect/Func/IR/FuncOps.cpp
+@@ -155,6 +155,22 @@ LogicalResult CallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+   return success();
+ }
+ 
++void CallOp::getEffects(
++    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
++        &effects) {
++    auto interface=mlir::cast<mlir::CallOpInterface>(getOperation());
++    auto callable=interface.resolveCallable();
++    bool isConstFn=false;
++    if(callable){
++      if(auto funcOp=mlir::dyn_cast_or_null<mlir::func::FuncOp>(callable)){
++        isConstFn=funcOp->hasAttr("const");
++      }
++    }
++    if(!isConstFn){
++    effects.emplace_back(MemoryEffects::Write::get());
++    effects.emplace_back(MemoryEffects::Read::get());
++    }
++}
+ FunctionType CallOp::getCalleeType() {
+   return FunctionType::get(getContext(), getOperandTypes(), getResultTypes());
+ }
+diff --git a/mlir/lib/ExecutionEngine/ExecutionEngine.cpp b/mlir/lib/ExecutionEngine/ExecutionEngine.cpp
+index b122fdb9b1da..e2b0828b8a79 100644
+--- a/mlir/lib/ExecutionEngine/ExecutionEngine.cpp
++++ b/mlir/lib/ExecutionEngine/ExecutionEngine.cpp
+@@ -271,7 +271,7 @@ ExecutionEngine::create(Operation *m, const ExecutionEngineOptions &options) {
+   // instead of this.  Currently, the LLVM module created above has no triple
+   // associated with it.
+   setupTargetTriple(llvmModule.get());
+-  packFunctionArguments(llvmModule.get());
++  //packFunctionArguments(llvmModule.get());
+ 
+   auto dataLayout = llvmModule->getDataLayout();
+ 
+diff --git a/mlir/lib/Interfaces/DataLayoutInterfaces.cpp b/mlir/lib/Interfaces/DataLayoutInterfaces.cpp
+index 141ec9e44166..4f30c59bc997 100644
+--- a/mlir/lib/Interfaces/DataLayoutInterfaces.cpp
++++ b/mlir/lib/Interfaces/DataLayoutInterfaces.cpp
+@@ -114,7 +114,7 @@ getIntegerTypeABIAlignment(IntegerType intType,
+   if (params.empty()) {
+     return intType.getWidth() < 64
+                ? llvm::PowerOf2Ceil(llvm::divideCeil(intType.getWidth(), 8))
+-               : 4;
++               : 8;
+   }
+ 
+   return extractABIAlignment(findEntryForIntegerType(intType, params));
+diff --git a/mlir/lib/Target/LLVMIR/DebugTranslation.cpp b/mlir/lib/Target/LLVMIR/DebugTranslation.cpp
+index f409aa413cf7..ba23bbb1e751 100644
+--- a/mlir/lib/Target/LLVMIR/DebugTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/DebugTranslation.cpp
+@@ -73,8 +73,8 @@ void DebugTranslation::translate(LLVMFuncOp func, llvm::Function &llvmFunc) {
+             });
+           })
+           .wasInterrupted();
+-  if (hasCallWithoutDebugInfo)
+-    return;
++  //if (hasCallWithoutDebugInfo)
++  //  return;
+ 
+   // Look for a sub program attached to the function.
+   auto spLoc =
+diff --git a/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp b/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
+index 0ce7d4fe1232..7dbc266b4bf9 100644
+--- a/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
++++ b/mlir/lib/Target/LLVMIR/ModuleTranslation.cpp
+@@ -418,10 +418,10 @@ llvm::Constant *mlir::LLVM::detail::getLLVMConstant(
+ }
+ 
+ ModuleTranslation::ModuleTranslation(Operation *module,
+-                                     std::unique_ptr<llvm::Module> llvmModule)
++                                     std::unique_ptr<llvm::Module> llvmModule,bool withDebugInfo)
+     : mlirModule(module), llvmModule(std::move(llvmModule)),
+       debugTranslation(
+-          std::make_unique<DebugTranslation>(module, *this->llvmModule)),
++          std::make_unique<DebugTranslation>(module, *this->llvmModule)),withDebugInfo(withDebugInfo),
+       loopAnnotationTranslation(std::make_unique<LoopAnnotationTranslation>(
+           module, *this->llvmModule)),
+       typeTranslator(this->llvmModule->getContext()),
+@@ -619,8 +619,10 @@ LogicalResult ModuleTranslation::convertBlock(Block &bb, bool ignoreArguments,
+   // Traverse operations.
+   for (auto &op : bb) {
+     // Set the current debug location within the builder.
+-    builder.SetCurrentDebugLocation(
++    if(withDebugInfo){
++      builder.SetCurrentDebugLocation(
+         debugTranslation->translateLoc(op.getLoc(), subprogram));
++    }
+ 
+     if (failed(convertOperation(op, builder)))
+       return failure();
+@@ -838,7 +840,9 @@ LogicalResult ModuleTranslation::convertOneFunction(LLVMFuncOp func) {
+   llvm::Function *llvmFunc = lookupFunction(func.getName());
+ 
+   // Translate the debug information for this function.
+-  debugTranslation->translate(func, *llvmFunc);
++  if(withDebugInfo){
++    debugTranslation->translate(func, *llvmFunc);
++  }
+ 
+   // Add function arguments to the value remapping table.
+   for (auto [mlirArg, llvmArg] :
+@@ -1226,7 +1230,11 @@ SmallVector<llvm::Value *> ModuleTranslation::lookupValues(ValueRange values) {
+ 
+ const llvm::DILocation *
+ ModuleTranslation::translateLoc(Location loc, llvm::DILocalScope *scope) {
+-  return debugTranslation->translateLoc(loc, scope);
++    if(withDebugInfo){
++      return debugTranslation->translateLoc(loc, scope);
++    }else{
++      return nullptr;
++    }
+ }
+ 
+ llvm::Metadata *ModuleTranslation::translateDebugInfo(LLVM::DINodeAttr attr) {
+@@ -1281,8 +1289,7 @@ prepareLLVMModule(Operation *m, llvm::LLVMContext &llvmContext,
+ }
+ 
+ std::unique_ptr<llvm::Module>
+-mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
+-                              StringRef name) {
++mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,StringRef name, bool withDebugInfo) {
+   if (!satisfiesLLVMModule(module)) {
+     module->emitOpError("can not be translated to an LLVMIR module");
+     return nullptr;
+@@ -1295,7 +1302,7 @@ mlir::translateModuleToLLVMIR(Operation *module, llvm::LLVMContext &llvmContext,
+ 
+   LLVM::ensureDistinctSuccessors(module);
+ 
+-  ModuleTranslation translator(module, std::move(llvmModule));
++  ModuleTranslation translator(module, std::move(llvmModule),withDebugInfo);
+   if (failed(translator.convertFunctionSignatures()))
+     return nullptr;
+   if (failed(translator.convertGlobals()))
+diff --git a/mlir/lib/Transforms/LocationSnapshot.cpp b/mlir/lib/Transforms/LocationSnapshot.cpp
+index b85850acda91..b8f3817db9db 100644
+--- a/mlir/lib/Transforms/LocationSnapshot.cpp
++++ b/mlir/lib/Transforms/LocationSnapshot.cpp
+@@ -140,7 +140,7 @@ struct LocationSnapshotPass
+ 
+   void runOnOperation() override {
+     Operation *op = getOperation();
+-    if (failed(generateLocationsFromIR(fileName, op, OpPrintingFlags(), tag)))
++    if (failed(generateLocationsFromIR(fileName, op, flags, tag)))
+       return signalPassFailure();
+   }
+ 
+diff --git a/mlir/lib/Transforms/Utils/DialectConversion.cpp b/mlir/lib/Transforms/Utils/DialectConversion.cpp
+index f5e9e71506e3..9adbc0be8351 100644
+--- a/mlir/lib/Transforms/Utils/DialectConversion.cpp
++++ b/mlir/lib/Transforms/Utils/DialectConversion.cpp
+@@ -2452,13 +2452,15 @@ OperationConverter::finalize(ConversionPatternRewriter &rewriter) {
+        i != e; ++i) {
+     unsigned replIdx = rewriterImpl.operationsWithChangedResults[i];
+     auto &repl = *(rewriterImpl.replacements.begin() + replIdx);
+-    for (OpResult result : repl.first->getResults()) {
++    auto* replFirst=repl.first;
++    OpReplacement replSecond=repl.second;
++    for (OpResult result : replFirst->getResults()) {
+       Value newValue = rewriterImpl.mapping.lookupOrNull(result);
+ 
+       // If the operation result was replaced with null, all of the uses of this
+       // value should be replaced.
+       if (!newValue) {
+-        if (failed(legalizeErasedResult(repl.first, result, rewriterImpl)))
++        if (failed(legalizeErasedResult(replFirst, result, rewriterImpl)))
+           return failure();
+         continue;
+       }
+@@ -2472,9 +2474,9 @@ OperationConverter::finalize(ConversionPatternRewriter &rewriter) {
+         inverseMapping = rewriterImpl.mapping.getInverse();
+ 
+       // Legalize this result.
+-      rewriter.setInsertionPoint(repl.first);
+-      if (failed(legalizeChangedResultType(repl.first, result, newValue,
+-                                           repl.second.converter, rewriter,
++      rewriter.setInsertionPoint(replFirst);
++      if (failed(legalizeChangedResultType(replFirst, result, newValue,
++                                           replSecond.converter, rewriter,
+                                            rewriterImpl, *inverseMapping)))
+         return failure();
+ 
+-- 
+2.34.1
+

@@ -1,0 +1,86 @@
+From efe88b81be500ab722a1fc39333073d5cbf949af Mon Sep 17 00:00:00 2001
+From: Florian Drescher <florian.drescher@tum.de>
+Date: Sat, 5 Aug 2023 06:41:24 +0000
+Subject: [PATCH 2/3] Make opaque properties comparable
+
+---
+ mlir/include/mlir/IR/ExtensibleDialect.h |  1 +
+ mlir/include/mlir/IR/OperationSupport.h  | 13 +++++++++++++
+ mlir/lib/IR/MLIRContext.cpp              |  4 ++++
+ 3 files changed, 18 insertions(+)
+
+diff --git a/mlir/include/mlir/IR/ExtensibleDialect.h b/mlir/include/mlir/IR/ExtensibleDialect.h
+index 9a35077017e4..4482fa21be28 100644
+--- a/mlir/include/mlir/IR/ExtensibleDialect.h
++++ b/mlir/include/mlir/IR/ExtensibleDialect.h
+@@ -494,6 +494,7 @@ public:
+   }
+   Attribute getPropertiesAsAttr(Operation *op) final { return {}; }
+   void copyProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {}
++  bool compareProperties(OpaqueProperties, OpaqueProperties) final { return false; }
+   llvm::hash_code hashProperties(OpaqueProperties prop) final { return {}; }
+ 
+ private:
+diff --git a/mlir/include/mlir/IR/OperationSupport.h b/mlir/include/mlir/IR/OperationSupport.h
+index f3a79eb52f8e..aaa463eb8a90 100644
+--- a/mlir/include/mlir/IR/OperationSupport.h
++++ b/mlir/include/mlir/IR/OperationSupport.h
+@@ -141,6 +141,7 @@ public:
+                                                 InFlightDiagnostic *) = 0;
+     virtual Attribute getPropertiesAsAttr(Operation *) = 0;
+     virtual void copyProperties(OpaqueProperties, OpaqueProperties) = 0;
++    virtual bool compareProperties(OpaqueProperties, OpaqueProperties) = 0;
+     virtual llvm::hash_code hashProperties(OpaqueProperties) = 0;
+   };
+ 
+@@ -220,6 +221,7 @@ protected:
+                                         Attribute, InFlightDiagnostic *) final;
+     Attribute getPropertiesAsAttr(Operation *) final;
+     void copyProperties(OpaqueProperties, OpaqueProperties) final;
++    bool compareProperties(OpaqueProperties, OpaqueProperties) final;
+     llvm::hash_code hashProperties(OpaqueProperties) final;
+   };
+ 
+@@ -437,6 +439,10 @@ public:
+     return getImpl()->copyProperties(lhs, rhs);
+   }
+ 
++  bool compareOpProperties(OpaqueProperties lhs, OpaqueProperties rhs) const {
++    return getImpl()->compareProperties(lhs, rhs);
++  }
++
+   llvm::hash_code hashOpProperties(OpaqueProperties properties) const {
+     return getImpl()->hashProperties(properties);
+   }
+@@ -639,6 +645,13 @@ public:
+       }
+       return {};
+     }
++    bool compareProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {
++      if constexpr (std::is_same_v<Properties, EmptyProperties>) {
++        return true;
++      } else {
++        return *lhs.as<Properties *>() == *rhs.as<Properties *>();
++      }
++    }
+     void copyProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {
+       *lhs.as<Properties *>() = *rhs.as<Properties *>();
+     }
+diff --git a/mlir/lib/IR/MLIRContext.cpp b/mlir/lib/IR/MLIRContext.cpp
+index e19c3d4d5417..b485fd2b2e0f 100644
+--- a/mlir/lib/IR/MLIRContext.cpp
++++ b/mlir/lib/IR/MLIRContext.cpp
+@@ -864,6 +864,10 @@ void OperationName::UnregisteredOpModel::copyProperties(OpaqueProperties lhs,
+                                                         OpaqueProperties rhs) {
+   *lhs.as<Attribute *>() = *rhs.as<Attribute *>();
+ }
++bool OperationName::UnregisteredOpModel::compareProperties(OpaqueProperties lhs,
++                                                        OpaqueProperties rhs) {
++  return *lhs.as<Attribute *>() == *rhs.as<Attribute *>();
++}
+ llvm::hash_code
+ OperationName::UnregisteredOpModel::hashProperties(OpaqueProperties prop) {
+   return llvm::hash_combine(*prop.as<Attribute *>());
+-- 
+2.32.0
+

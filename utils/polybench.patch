@@ -1,0 +1,78 @@
+From 39095205719a5db6b047a768aba1fe27cd0113a3 Mon Sep 17 00:00:00 2001
+From: Florian Drescher <florian.drescher@tum.de>
+Date: Wed, 13 Sep 2023 09:51:54 +0000
+Subject: [PATCH] Adjust for mlir-codegen benchmarks
+
+---
+ utilities/makefile-gen.pl | 23 +++++++++++++++++++----
+ utilities/run-all.pl      | 14 ++++++++++++--
+ 2 files changed, 31 insertions(+), 6 deletions(-)
+
+diff --git a/utilities/makefile-gen.pl b/utilities/makefile-gen.pl
+index 00aaa45..b9f6cea 100644
+--- a/utilities/makefile-gen.pl
++++ b/utilities/makefile-gen.pl
+@@ -58,14 +58,29 @@ foreach $key (keys %categories) {
+ 
+ print FILE << "EOF";
+ include $configFile
++EOF
+ 
+-EXTRA_FLAGS=$extra_flags{$kernel}
+-
++if ($ENV{POLYGEIST}){
++print FILE << "EOF";
+ $kernel: $kernel.c $kernel.h
+-	\${VERBOSE} \${CC} -o $kernel $kernel.c \${CFLAGS} -I. -I$utilityDir $utilityDir/polybench.c \${EXTRA_FLAGS}
++\t\${COMPILER_BIN_DIR}/cgeist $kernel.c --memref-abi=0 --c-style-memref=0 --O0 -S -o $kernel.tmp.mlir -I. -I$utilityDir $utilityDir/polybench.c \${EXTRA_FLAGS}
++\t\${COMPILER_BIN_DIR}/mlir-opt --lower-affine $kernel.tmp.mlir -o $kernel.mlir
++EOF
++} else {
++print FILE << "EOF";
++$kernel: $kernel.c $kernel.h
++\t\${COMPILER_BIN_DIR}/clang $kernel.c -O0 -S -emit-llvm -I. -I$utilityDir $utilityDir/polybench.c -Xclang -disable-llvm-optzns \${EXTRA_FLAGS}
++\t\${COMPILER_BIN_DIR}/llvm-link *.ll -o $kernel.tmp.ll
++\t\${COMPILER_BIN_DIR}/mlir-translate --import-llvm $kernel.tmp.ll -o $kernel.mlir
++EOF
++}
+ 
++print FILE << "EOF";
+ clean:
+-	@ rm -f $kernel
++\t@ rm -f *.ll
++\t@ rm -f *.mlir
++\t@ rm -rf dummy
++\t@ rm -f *-time.txt
+ 
+ EOF
+ 
+diff --git a/utilities/run-all.pl b/utilities/run-all.pl
+index 6b6674d..b5111dc 100644
+--- a/utilities/run-all.pl
++++ b/utilities/run-all.pl
+@@ -40,10 +40,20 @@ foreach $cat (@categories) {
+         next if ($dir=~'^\..*');
+         next if (!(-d $target.'/'.$dir));
+ 
++        my $bin_dir = $ENV{MLIR_BUILD};
++        my $template_lib = $ENV{TEMPLATE_LIB};
+         my $kernel = $dir;
+         my $targetDir = $target.'/'.$dir;
+-        my $command = "cd $targetDir; make clean; make; ./$kernel";
+-	$command .= " 2>> $OUTFILE" if ($OUTFILE ne '');
++        my $command = "cd $targetDir; make clean; make;
++        $bin_dir/mlir-codegen -lib $template_lib -fast $kernel.mlir -main -time -code 32000 -code 32000;
++        $bin_dir/mlir-codegen -lib $template_lib -O0 $kernel.mlir -main -time -llvmcmodel=1;
++        $bin_dir/mlir-codegen -lib $template_lib -O2 $kernel.mlir -main -time -llvmcmodel=1;
++        echo \"EXECUTION:JIT:$kernel\" >> $OUTFILE;
++        cat JIT-time.txt >> $OUTFILE;
++        echo \"EXECUTION:MLIRExecEngineOpt0:$kernel\" >> $OUTFILE;
++        cat MLIRExecEngineOpt0-time.txt >> $OUTFILE;
++        echo \"EXECUTION:MLIRExecEngineOpt2:$kernel\" >> $OUTFILE;
++        cat MLIRExecEngineOpt2-time.txt >> $OUTFILE;";
+         print($command."\n");
+         system($command);
+    }
+-- 
+2.32.0
+

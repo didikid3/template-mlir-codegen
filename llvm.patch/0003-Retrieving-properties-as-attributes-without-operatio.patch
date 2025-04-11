@@ -1,0 +1,102 @@
+From 527260ad92eaca06d09b41f77617f49aa0cf6918 Mon Sep 17 00:00:00 2001
+From: Florian Drescher <florian.drescher@tum.de>
+Date: Sat, 5 Aug 2023 15:09:56 +0000
+Subject: [PATCH 3/3] Retrieving properties as attributes without operation
+
+---
+ mlir/include/mlir/IR/ExtensibleDialect.h |  1 +
+ mlir/include/mlir/IR/OperationSupport.h  | 24 +++++++++++++++++++-----
+ mlir/lib/IR/MLIRContext.cpp              |  4 ++++
+ 3 files changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/mlir/include/mlir/IR/ExtensibleDialect.h b/mlir/include/mlir/IR/ExtensibleDialect.h
+index 4482fa21be28..3a866bf66e87 100644
+--- a/mlir/include/mlir/IR/ExtensibleDialect.h
++++ b/mlir/include/mlir/IR/ExtensibleDialect.h
+@@ -493,6 +493,7 @@ public:
+     return failure();
+   }
+   Attribute getPropertiesAsAttr(Operation *op) final { return {}; }
++  Attribute getPropertiesAsAttr(MLIRContext *, OpaqueProperties) final { return {}; }
+   void copyProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {}
+   bool compareProperties(OpaqueProperties, OpaqueProperties) final { return false; }
+   llvm::hash_code hashProperties(OpaqueProperties prop) final { return {}; }
+diff --git a/mlir/include/mlir/IR/OperationSupport.h b/mlir/include/mlir/IR/OperationSupport.h
+index aaa463eb8a90..63052455f432 100644
+--- a/mlir/include/mlir/IR/OperationSupport.h
++++ b/mlir/include/mlir/IR/OperationSupport.h
+@@ -140,6 +140,7 @@ public:
+                                                 Attribute,
+                                                 InFlightDiagnostic *) = 0;
+     virtual Attribute getPropertiesAsAttr(Operation *) = 0;
++    virtual Attribute getPropertiesAsAttr(MLIRContext *, OpaqueProperties) = 0;
+     virtual void copyProperties(OpaqueProperties, OpaqueProperties) = 0;
+     virtual bool compareProperties(OpaqueProperties, OpaqueProperties) = 0;
+     virtual llvm::hash_code hashProperties(OpaqueProperties) = 0;
+@@ -220,6 +221,7 @@ protected:
+     LogicalResult setPropertiesFromAttr(OperationName, OpaqueProperties,
+                                         Attribute, InFlightDiagnostic *) final;
+     Attribute getPropertiesAsAttr(Operation *) final;
++    Attribute getPropertiesAsAttr(MLIRContext *, OpaqueProperties) final;
+     void copyProperties(OpaqueProperties, OpaqueProperties) final;
+     bool compareProperties(OpaqueProperties, OpaqueProperties) final;
+     llvm::hash_code hashProperties(OpaqueProperties) final;
+@@ -426,6 +428,12 @@ public:
+     return getImpl()->getPropertiesAsAttr(op);
+   }
+ 
++  /// Return the op properties converted to an Attribute.
++  Attribute getOpPropertiesAsAttribute(MLIRContext *ctx,
++                                       OpaqueProperties properties) const {
++    return getImpl()->getPropertiesAsAttr(ctx, properties);
++  }
++
+   /// Define the op properties from the provided Attribute.
+   LogicalResult
+   setOpPropertiesFromAttribute(OperationName opName,
+@@ -640,16 +648,22 @@ public:
+     Attribute getPropertiesAsAttr(Operation *op) final {
+       if constexpr (hasProperties) {
+         auto concreteOp = cast<ConcreteOp>(op);
+-        return ConcreteOp::getPropertiesAsAttr(concreteOp->getContext(),
+-                                               concreteOp.getProperties());
++        return ConcreteOp::getPropertiesAsAttr(concreteOp->getContext(), concreteOp.getProperties());
++      }
++      return {};
++    }
++    Attribute getPropertiesAsAttr(MLIRContext *ctx,
++                                  OpaqueProperties properties) final {
++      if constexpr (hasProperties) {
++        return ConcreteOp::getPropertiesAsAttr(ctx, *properties.as<Properties *>());
+       }
+       return {};
+     }
+     bool compareProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {
+-      if constexpr (std::is_same_v<Properties, EmptyProperties>) {
+-        return true;
+-      } else {
++      if constexpr (hasProperties) {
+         return *lhs.as<Properties *>() == *rhs.as<Properties *>();
++      } else {
++        return true;
+       }
+     }
+     void copyProperties(OpaqueProperties lhs, OpaqueProperties rhs) final {
+diff --git a/mlir/lib/IR/MLIRContext.cpp b/mlir/lib/IR/MLIRContext.cpp
+index b485fd2b2e0f..a2511302f122 100644
+--- a/mlir/lib/IR/MLIRContext.cpp
++++ b/mlir/lib/IR/MLIRContext.cpp
+@@ -860,6 +860,10 @@ Attribute
+ OperationName::UnregisteredOpModel::getPropertiesAsAttr(Operation *op) {
+   return *op->getPropertiesStorage().as<Attribute *>();
+ }
++Attribute
++OperationName::UnregisteredOpModel::getPropertiesAsAttr(MLIRContext *, OpaqueProperties props) {
++  return *props.as<Attribute *>();
++}
+ void OperationName::UnregisteredOpModel::copyProperties(OpaqueProperties lhs,
+                                                         OpaqueProperties rhs) {
+   *lhs.as<Attribute *>() = *rhs.as<Attribute *>();
+-- 
+2.32.0
+

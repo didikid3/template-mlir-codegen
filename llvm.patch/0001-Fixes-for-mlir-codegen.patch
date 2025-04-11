@@ -1,0 +1,61 @@
+From 6bc7e749b9780d67753c5f00298b0dac3dedcf48 Mon Sep 17 00:00:00 2001
+From: Florian Drescher <florian.drescher@tum.de>
+Date: Thu, 13 Jul 2023 15:57:41 +0000
+Subject: [PATCH 1/3] Fixes for mlir-codegen
+
+- fix interpreter array initialization
+- change scf lowering
+- fix data layout alignment
+---
+ llvm/lib/ExecutionEngine/ExecutionEngine.cpp       | 14 +++++++++++++-
+ .../SCF/Transforms/StructuralTypeConversions.cpp   |  2 +-
+ 2 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/llvm/lib/ExecutionEngine/ExecutionEngine.cpp b/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
+index 768d84501337..78ace14d9e0e 100644
+--- a/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
++++ b/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
+@@ -618,7 +618,18 @@ GenericValue ExecutionEngine::getConstantValue(const Constant *C) {
+       case Type::ScalableVectorTyID:
+         report_fatal_error(
+             "Scalable vector support not yet implemented in ExecutionEngine");
+-      case Type::FixedVectorTyID:
++      case Type::ArrayTyID: {
++        auto *ArrTy = cast<ArrayType>(C->getType());
++        Type *ElemTy = ArrTy->getElementType();
++        unsigned int elemNum = ArrTy->getNumElements();
++        Result.AggregateVal.resize(elemNum);
++        if (ElemTy->isIntegerTy())
++          for (unsigned int i = 0; i < elemNum; ++i)
++            Result.AggregateVal[i].IntVal =
++                APInt(ElemTy->getPrimitiveSizeInBits(), 0);
++        break;
++      }
++      case Type::FixedVectorTyID: {
+         // if the whole vector is 'undef' just reserve memory for the value.
+         auto *VTy = cast<FixedVectorType>(C->getType());
+         Type *ElemTy = VTy->getElementType();
+@@ -629,6 +640,7 @@ GenericValue ExecutionEngine::getConstantValue(const Constant *C) {
+             Result.AggregateVal[i].IntVal =
+                 APInt(ElemTy->getPrimitiveSizeInBits(), 0);
+         break;
++      }
+     }
+     return Result;
+   }
+diff --git a/mlir/lib/Dialect/SCF/Transforms/StructuralTypeConversions.cpp b/mlir/lib/Dialect/SCF/Transforms/StructuralTypeConversions.cpp
+index 9a1fa1871ffa..d52b0ab70811 100644
+--- a/mlir/lib/Dialect/SCF/Transforms/StructuralTypeConversions.cpp
++++ b/mlir/lib/Dialect/SCF/Transforms/StructuralTypeConversions.cpp
+@@ -22,7 +22,7 @@ static void unpackUnrealizedConversionCast(Value v,
+                                            SmallVectorImpl<Value> &unpacked) {
+   if (auto cast =
+           dyn_cast_or_null<UnrealizedConversionCastOp>(v.getDefiningOp())) {
+-    if (cast.getInputs().size() != 1) {
++    if (cast.getInputs().size() > 1) {
+       // 1 : N type conversion.
+       unpacked.append(cast.getInputs().begin(), cast.getInputs().end());
+       return;
+-- 
+2.32.0
+
