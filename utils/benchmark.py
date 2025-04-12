@@ -14,8 +14,15 @@ CONFIGURATIONS = [
     },
     {
         "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=2"
+    },
+    {
+        "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=3"
+    },
+    {
+        "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=4"
     }
 ]
+
 for j, config in enumerate(CONFIGURATIONS):
     assert (not AARCH64 or os.environ.get("COREMARK"))
     if (j == 0 or j == 3) and os.environ.get("COREMARK"):
