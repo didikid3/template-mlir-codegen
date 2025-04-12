@@ -10,6 +10,7 @@
 #define NO_EVICT 1
 #define EVICTION_ROUND_ROBIN 2
 #define EVICTION_LRU 3
+#define EVICTION_LFU 4
 #ifdef EVICTION_STRATEGY
 #define TMP_REGISTER_COPY
 #endif

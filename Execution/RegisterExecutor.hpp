@@ -39,6 +39,7 @@ public:
         // return addr > 0 && m_validRegisters.test(addr - 1) && m_values[addr - 1] == value;
     if (addr > 0 && m_validRegisters.test(addr - 1) && m_values[addr - 1] == value) {
         m_usage[addr - 1] = ++m_timestamp; // Recent use update
+        registerFrequencies[addr]++; // update frequency
         return true;
     }
         return false;
@@ -55,6 +56,7 @@ public:
         m_validRegisters.set(reg - 1);
         m_values[reg - 1] = value;
         m_usage[reg - 1] = ++m_timestamp; // Update usage
+        registerFrequencies[reg]++; // update frequency
     }
 
     uint8_t tmpRegister(mlir::Value) const
@@ -99,6 +101,30 @@ public:
         }
         ASSURE(lruIndex, <=, maxEvictionIndex);
         return lruIndex + 1;
+#elif EVICTION_STRATEGY == EVICTION_LFU
+        // in range [1, CACHE_REGISTERS] is valid (zero means not available)
+        const uint32_t v = static_cast<uint32_t>(~m_validRegisters.to_ulong())
+            & static_cast<uint32_t>(CLOBBER_ALL.to_ulong());
+        if (v) {
+            const auto lz = 32 - __builtin_clz(v);
+            return lz;
+        }
+        // No free registers available, select LFU for eviction
+        // Eviction based on frequency of use
+        uint64_t minFreq = UINT64_MAX;
+        uint8_t regToEvict = 0; 
+        for(uint8_t i = 3; i <= CACHE_REGISTERS; ++i) {
+            if(m_validRegisters.test(i-1)) {
+                if(registerFrequencies[i] < minFreq) {
+                    minFreq = registerFrequencies[i];
+                    regToEvict = i;
+                }
+            }
+        }
+        ASSURE(regToEvict, >, 2);   // ensure you're not evicting reserved registers (0–2)
+        ASSURE(regToEvict, <=, maxEvictionIndex); 
+        registerFrequencies[regToEvict] = 1; // Reset frequency of the evicted register
+        return regToEvict;
 #else
         return 0;
 #endif
@@ -120,6 +146,7 @@ private:
     ClobberMask m_validRegisters{};
     std::array<mlir::Value, CACHE_REGISTERS> m_values{};
     std::array<uint64_t, CACHE_REGISTERS> m_usage{}; // Array to track the timestamps
+    std::array<uint32_t, CACHE_REGISTERS + 1> registerFrequencies{}; // index 0 unused
     uint64_t m_timestamp = 0; 
     mutable uint32_t evictionIndex = 2;
     uint32_t maxEvictionIndex = CACHE_REGISTERS - 1;
