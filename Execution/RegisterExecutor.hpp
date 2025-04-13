@@ -59,7 +59,7 @@ public:
         registerFrequencies[reg]++; // update frequency
     }
 
-    uint8_t tmpRegister(mlir::Value) const
+    uint8_t tmpRegister(mlir::Value)
     {
 #if EVICTION_STRATEGY == NO_EVICT
         // in range [1, CACHE_REGISTERS] is valid (zero means not available)
@@ -113,7 +113,7 @@ public:
         // Eviction based on frequency of use
         uint64_t minFreq = UINT64_MAX;
         uint8_t regToEvict = 0; 
-        for(uint8_t i = 3; i <= CACHE_REGISTERS; ++i) {
+        for(uint8_t i = 3; i < CACHE_REGISTERS; ++i) {
             if(m_validRegisters.test(i-1)) {
                 if(registerFrequencies[i] < minFreq) {
                     minFreq = registerFrequencies[i];
