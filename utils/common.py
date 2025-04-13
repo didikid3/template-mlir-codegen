@@ -3,6 +3,7 @@ import os
 import sys
 from subprocess import PIPE, Popen, TimeoutExpired
 import platform
+import traceback
 
 def signal_handler(sig, frame):
     sys.exit(0)
@@ -84,7 +85,7 @@ def benchmark(file, args, execution_modes=ALL, stdin=None, noclear=False):
             print("!!!!!!!!!!!!!!!! timeout !!!!!!!!!!!!!!!!", file=OUT_FILE)
         except Exception as ex:
             print("!!!!!!!!!!!!!!!! exception !!!!!!!!!!!!!!!!", file=OUT_FILE)
-            print(ex, file=OUT_FILE)
+            traceback.print_exc(file=OUT_FILE)  # full traceback
 
 if __name__ == "__main__":
     print("Compiler mlir-codege with default")

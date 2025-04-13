@@ -10,9 +10,13 @@ CONFIGURATIONS = [
         "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=1"
     },
     {
-        "cmake": "-DOPTIMIZED_VARIABLE_PASSING=OFF -DEVICTION_STRATEGY=OFF"
+        "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=OFF"
     },
-    {
+    { 
+        "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=2"
+    },
+    #adding EVICTION_STRATEGY=2 again since j=0 and j=3 are skipped
+    { 
         "cmake": "-DOPTIMIZED_VARIABLE_PASSING=ON -DEVICTION_STRATEGY=2"
     },
     {
