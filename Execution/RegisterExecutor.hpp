@@ -4,6 +4,36 @@
 #include "Preparation/CustomPass.hpp"
 #include "Templates/PredefinedPatterns.hpp"
 
+#include <iostream>
+#include <fstream>
+#include <mutex>
+
+class RegisterLogger {
+public:
+    static RegisterLogger& instance(){
+        static RegisterLogger instance;
+        return instance;
+    }
+
+    void log(const std::string& message){
+        std::lock_guard<std::mutex> lock(m_mutex);
+        std::ofstream logFile("register_cache.log", std::ios::out | std::ios::app);
+        if (logFile.is_open()) {
+            logFile << message << std::endl;
+        }
+    }
+
+    ~RegisterLogger() {
+        if (logFile.is_open()) {
+            logFile.close();
+        }
+    }
+private:
+    RegisterLogger(){}
+    std::ofstream logFile;
+    std::mutex m_mutex;
+};
+
 template <typename Impl>
 class RegisterExecutor : public StackExecutor<Impl>
 {
@@ -40,8 +70,17 @@ public:
     if (addr > 0 && m_validRegisters.test(addr - 1) && m_values[addr - 1] == value) {
         m_usage[addr - 1] = ++m_timestamp; // Recent use update
         registerFrequencies[addr]++; // update frequency
+
+        std::stringstream msg;
+        msg << std::hex << "[0x" << this << "] " << std::dec << " A " << std::to_string(addr-1) << " TRUE";
+        RegisterLogger::instance().log(msg.str());
+
         return true;
     }
+        std::stringstream msg;
+        msg << std::hex << "[0x" << this << "] " << std::dec << " A " << std::to_string(addr-1) << " FALSE";
+        RegisterLogger::instance().log(msg.str());
+
         return false;
 #else
         return false;
@@ -57,6 +96,10 @@ public:
         m_values[reg - 1] = value;
         m_usage[reg - 1] = ++m_timestamp; // Update usage
         registerFrequencies[reg]++; // update frequency
+
+        std::stringstream msg;
+        msg << std::hex << "[0x" << this << "] " << std::dec << " E " << std::to_string(reg-1);
+        RegisterLogger::instance().log(msg.str());
     }
 
     uint8_t tmpRegister(mlir::Value)
