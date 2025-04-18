@@ -91,8 +91,12 @@ prepare-x86:../llvm-project/build-release/bin/mlir-opt \
 prepare-aarch64:../llvm-project/build-release/bin/mlir-opt \
 	../coremark/coremark.mlir
 
+benchmark-debug:
+	utils/run-debug.sh
+
 benchmark-x86:
-	utils/run-all.sh POLYBENCH,COREMARK,MICROBM
+	utils/run-all.sh MICROBM
+	# utils/run-all.sh POLYBENCH,COREMARK,MICROBM
 
 benchmark-aarch64:
 	utils/run-all.sh COREMARK
