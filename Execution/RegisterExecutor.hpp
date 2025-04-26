@@ -72,13 +72,13 @@ public:
         registerFrequencies[addr]++; // update frequency
 
         std::stringstream msg;
-        msg << std::hex << "[0x" << this << "] " << std::dec << " A " << std::to_string(addr-1) << " TRUE";
+        msg << " A " << std::to_string(addr-1) << " TRUE";
         RegisterLogger::instance().log(msg.str());
 
         return true;
     }
         std::stringstream msg;
-        msg << std::hex << "[0x" << this << "] " << std::dec << " A " << std::to_string(addr-1) << " FALSE";
+        msg << " A " << std::to_string(addr-1) << " FALSE";
         RegisterLogger::instance().log(msg.str());
 
         return false;
@@ -98,7 +98,7 @@ public:
         registerFrequencies[reg]++; // update frequency
 
         std::stringstream msg;
-        msg << std::hex << "[0x" << this << "] " << std::dec << " E " << std::to_string(reg-1);
+        msg << " E " << std::to_string(reg-1);
         RegisterLogger::instance().log(msg.str());
     }
 

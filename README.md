@@ -1,3 +1,20 @@
+# CSE 583 Notes
+
+This repository is only a section of the total software artifact needed to reproduce our results. To do so the original artifact from the Fast Template Based Code Generation for MLIR paper must be downloaded. Note that just installing and compiling the base version requires around 50 GB. Compiling and running benchmark times vary depending on the machine used. Across different x86 and arm platforms, we got around ~ 1-3 hours to compile and benchmark times vary drastically depending on which one is run. Coremark may take around 20 minutes - 1 hour. Polybench ran for more than 6 hours.
+
+Follow the steps in the artifact README to understand how to compile and run the base benchmarks. Once that is understood, replace thier mlir-codegen directory with our repository which modifies some utility files to test different eviction strategies. To get access and eviction logs, a debug build (NOT RELEAE) must be compiled and will utilize the following command. 
+
+```bash
+make benchmark-debug
+```
+
+All other results and logs can still utilize the same workflow as the paper used.
+
+Link to the paper: https://dl.acm.org/doi/10.1145/3640537.3641567  
+Link to Artifact: https://dl.acm.org/do/10.5281/zenodo.10571103/full/
+
+
+
 # Template-based MLIR Compiler
 
 The repository contains the sources for building the template-based MLIR compiler and the dependent LLVM sources (commit `5d4927` with some modifications). It compiles and executes MLIR programs consisting of supported operations (multiple sample programs are included; similar to `mlir-cpu-runner`); on first execution, it generates required templates and persists them.
